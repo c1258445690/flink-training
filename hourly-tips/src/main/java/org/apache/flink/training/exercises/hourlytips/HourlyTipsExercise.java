@@ -20,8 +20,8 @@ package org.apache.flink.training.exercises.hourlytips;
 
 import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.common.eventtime.TimestampAssigner;
+import org.apache.flink.api.common.eventtime.TimestampAssignerSupplier;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -34,10 +34,7 @@ import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.training.exercises.common.datatypes.TaxiFare;
 import org.apache.flink.training.exercises.common.sources.TaxiFareGenerator;
-import org.apache.flink.training.exercises.common.utils.MissingSolutionException;
 import org.apache.flink.util.Collector;
-
-import java.time.Duration;
 
 /**
  * The Hourly Tips exercise from the Flink training.
@@ -50,7 +47,9 @@ public class HourlyTipsExercise {
     private final SourceFunction<TaxiFare> source;
     private final SinkFunction<Tuple3<Long, Long, Float>> sink;
 
-    /** Creates a job using the source and sink provided. */
+    /**
+     * Creates a job using the source and sink provided.
+     */
     public HourlyTipsExercise(
             SourceFunction<TaxiFare> source, SinkFunction<Tuple3<Long, Long, Float>> sink) {
 
@@ -86,33 +85,30 @@ public class HourlyTipsExercise {
         DataStream<TaxiFare> fares = env.addSource(source);
 
         // replace this with your solution
+        TimestampAssignerSupplier tas = context -> (TimestampAssigner<TaxiFare>)
+                (element, recordTimestamp) -> element.getEventTimeMillis();
         WatermarkStrategy<TaxiFare> strategy = WatermarkStrategy
-                .forBoundedOutOfOrderness(Duration.ofSeconds(20))
-                .withTimestampAssigner(context->{
-                    return new TimestampAssigner<TaxiFare>() {
-                        @Override
-                        public long extractTimestamp(TaxiFare element, long recordTimestamp) {
-                            return element.getEventTimeMillis();
-                        }
-                    };
-                });
+//                .forBoundedOutOfOrderness(Duration.ofSeconds(20))
+                .noWatermarks()
+                .withTimestampAssigner(tas);
+
         fares.assignTimestampsAndWatermarks(strategy)
-                .keyBy(fare -> fare.rideId)
+                .keyBy(fare -> fare.driverId)
                 .window(TumblingEventTimeWindows.of(Time.hours(1)))
-                .process(new ProcessWindowFunction<TaxiFare, Tuple3<Long,Long,Float>, Long, TimeWindow>() {
+                .process(new ProcessWindowFunction<TaxiFare, Tuple3<Long, Long, Float>, Long, TimeWindow>() {
                     @Override
                     public void process(Long aLong, ProcessWindowFunction<TaxiFare,
                             Tuple3<Long, Long, Float>, Long, TimeWindow>.Context context,
                                         Iterable<TaxiFare> elements,
                                         Collector<Tuple3<Long, Long, Float>> out) throws Exception {
                         float[] sum = new float[1];
-                        elements.forEach(fare->{
+                        elements.forEach(fare -> {
                             sum[0] += fare.tip;
                         });
                         out.collect(new Tuple3<>(context.window().getEnd(), aLong, sum[0]));
                     }
                 }).windowAll(TumblingEventTimeWindows.of(Time.hours(1)))
-                .maxBy(2);
+                .maxBy(2).addSink(sink);
 
         // the results should be sent to the sink that was passed in
         // (otherwise the tests won't work)
